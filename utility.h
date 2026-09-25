@@ -1,5 +1,6 @@
 #pragma once
 #include"raylib.h"
+#include<string>
 
 enum COLOR {
 	PWHITE,PBLACK
@@ -40,6 +41,7 @@ enum MenuChoice {
     NONE,
     NEW_GAME,
     NEW_GAME_BOT,
+    NEW_GAME_ONLINE,
     LOAD_GAME,
     EXIT_GAME
 };
@@ -79,6 +81,34 @@ extern const TimeOption TIME_OPTIONS[TIME_OPTION_COUNT];
 int ChooseColor();            // returns PWHITE (0), PBLACK (1), or -1 if cancelled
 int ChooseBotDifficulty();    // returns index into BOT_PROFILES, or -1 if cancelled
 float ChooseTimeControl();    // returns seconds per side, -1 for untimed, or -999.0f if cancelled
+
+// --- Online play (LAN / direct IP) -------------------------------------
+// Forward-declared so utility.h doesn't need to include the socket headers
+// pulled in by Network.h; only pointers/references to it are used here.
+class NetworkSession;
+
+enum class OnlineHostJoinChoice { HOST, JOIN, CANCELLED };
+OnlineHostJoinChoice ChooseOnlineHostOrJoin();
+
+// Text-entry screen for "host[:port]". Returns an empty string if the user
+// cancelled.
+std::string PromptJoinAddress();
+
+// Host: opens a listening socket and shows a "waiting for opponent" screen
+// with the host's LAN IP so they can share it with a friend. Returns true
+// once a peer connects and the color/clock handshake completes; false if
+// the user cancelled or WindowShouldClose() fired.
+bool RunHostWaitScreen(NetworkSession& session, int port, COLOR hostColor,
+    float timeControlSeconds, std::string& outError);
+
+// Join: connects to host:port and completes the handshake, filling in the
+// color/clock the host assigned. Returns false if cancelled, refused, or
+// unreachable.
+bool RunJoinConnectScreen(NetworkSession& session, const std::string& address, int port,
+    COLOR& outAssignedColor, float& outTimeControlSeconds, std::string& outError);
+
+// Small reusable "OK" dismissable message screen for connection errors.
+void ShowErrorScreen(const std::string& title, const std::string& message);
 
 // --- Resizable window / fullscreen / maximize support -----------------
 //
