@@ -48,11 +48,36 @@ const tcpServer = net.createServer((socket) => {
 
     socket.on('data', (chunk) => {
         buffer += chunk.toString('utf8');
+
+        // Gracefully handle HTTP health checks from Render / Cloudflare / Go-http-client
+        if (buffer.startsWith('GET ') || buffer.startsWith('HEAD ') || buffer.startsWith('POST ') || buffer.startsWith('OPTIONS ')) {
+            if (buffer.includes('\r\n\r\n') || buffer.includes('\n\n')) {
+                const body = JSON.stringify({
+                    status: 'online',
+                    service: 'Chess-Engine-Multiplayer-Server',
+                    activeRooms: rooms.size,
+                    uptime: process.uptime()
+                });
+                const res = `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`;
+                try {
+                    socket.write(res);
+                    socket.end();
+                } catch (e) {}
+                buffer = '';
+            }
+            return;
+        }
+
         let boundaryIndex;
         while ((boundaryIndex = buffer.indexOf('\n')) !== -1) {
             const rawLine = buffer.slice(0, boundaryIndex).trim();
             buffer = buffer.slice(boundaryIndex + 1);
             if (rawLine.length === 0) continue;
+
+            // Ignore HTTP header lines if any health check headers arrived in chunks
+            if (rawLine.startsWith('Host:') || rawLine.startsWith('User-Agent:') || rawLine.startsWith('Accept:') || rawLine.startsWith('Connection:')) {
+                continue;
+            }
 
             try {
                 const msg = JSON.parse(rawLine);
@@ -288,6 +313,7 @@ const tcpServer = net.createServer((socket) => {
     });
 
     socket.on('error', (err) => {
+        if (err.code === 'EPIPE' || err.code === 'ECONNRESET') return;
         console.error(`[SOCKET ERROR] ${err.message}`);
     });
 });
