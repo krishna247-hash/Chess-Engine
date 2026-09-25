@@ -44,7 +44,9 @@ find_program(STOCKFISH_EXE NAMES stockfish PATHS /opt/homebrew/bin /usr/local/bi
 
 # Copy the PNGs and sounds asset folders next to the built executable so
 # LoadTexture("PNGs/....png") and LoadSound("sounds/....wav") resolve
-# correctly at runtime.
+# correctly at runtime. (haha.txt/savegame.txt, the save-game file Board::save()
+# writes, is intentionally gitignored and created at runtime by the game
+# itself, so it's not pre-copied here — a fresh clone has no such file yet.)
 add_custom_command(TARGET ChessGame POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/PNGs
@@ -52,9 +54,6 @@ add_custom_command(TARGET ChessGame POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/sounds
         $<TARGET_FILE_DIR:ChessGame>/sounds
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_SOURCE_DIR}/haha.txt
-        $<TARGET_FILE_DIR:ChessGame>/haha.txt
 )
 
 if(STOCKFISH_EXE)
