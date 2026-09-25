@@ -1,6 +1,9 @@
 #include"utility.h"
+#include"Network.h"
 #include<cstdio>
 #include<cmath>
+#include<cctype>
+#include<cstdlib>
 
 #define SCREENWIDTH 830
 #define SCREENHEIGHT 1000
@@ -264,11 +267,12 @@ MenuChoice ShowStartMenu() {
 
     const float btnW = 340;
     const float btnH = 64;
-    Rectangle newGameBtn = { (VIRTUAL_WIDTH - btnW) / 2.0f, 280, btnW, btnH };
-    Rectangle vsBotBtn = { (VIRTUAL_WIDTH - btnW) / 2.0f, 360, btnW, btnH };
-    Rectangle loadGameBtn = { (VIRTUAL_WIDTH - btnW) / 2.0f, 440, btnW, btnH };
-    Rectangle exitGameBtn = { (VIRTUAL_WIDTH - btnW) / 2.0f, 520, btnW, btnH };
-    float hoverNew = 0, hoverBot = 0, hoverLoad = 0, hoverExit = 0;
+    Rectangle newGameBtn = { (VIRTUAL_WIDTH - btnW) / 2.0f, 260, btnW, btnH };
+    Rectangle vsBotBtn = { (VIRTUAL_WIDTH - btnW) / 2.0f, 336, btnW, btnH };
+    Rectangle onlineBtn = { (VIRTUAL_WIDTH - btnW) / 2.0f, 412, btnW, btnH };
+    Rectangle loadGameBtn = { (VIRTUAL_WIDTH - btnW) / 2.0f, 488, btnW, btnH };
+    Rectangle exitGameBtn = { (VIRTUAL_WIDTH - btnW) / 2.0f, 564, btnW, btnH };
+    float hoverNew = 0, hoverBot = 0, hoverOnline = 0, hoverLoad = 0, hoverExit = 0;
     int frame = 0;
 
     while (!WindowShouldClose()) {
@@ -293,6 +297,8 @@ MenuChoice ShowStartMenu() {
             choice = NEW_GAME;
         if (DrawButton(vsBotBtn, "Play vs Bot", 20, hoverBot, GRAY, Color{ 120,170,220,255 }))
             choice = NEW_GAME_BOT;
+        if (DrawButton(onlineBtn, "Play Online with Friends", 20, hoverOnline, GRAY, Color{ 160,120,220,255 }))
+            choice = NEW_GAME_ONLINE;
         if (DrawButton(loadGameBtn, "Load Saved Game", 20, hoverLoad, GRAY, Color{ 210,180,110,255 }))
             choice = LOAD_GAME;
         if (DrawButton(exitGameBtn, "Exit Game", 20, hoverExit, GRAY, Color{ 210,90,90,255 }, RAYWHITE))
@@ -487,4 +493,292 @@ float ChooseTimeControl() {
     }
 
     return chosen;
+}
+
+// ---------------------------------------------------------------------
+// Online play (LAN / direct IP) setup screens
+// ---------------------------------------------------------------------
+
+void ShowErrorScreen(const std::string& title, const std::string& message) {
+    bool dismissed = false;
+    float hoverOk = 0;
+    int frame = 0;
+
+    while (!WindowShouldClose()) {
+        BeginVirtualScreen();
+        ClearBackground(DARKGRAY);
+        HandleWindowControls();
+
+        if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER)) dismissed = true;
+
+        int tw = MeasureText(title.c_str(), 28);
+        DrawText(title.c_str(), (VIRTUAL_WIDTH - tw) / 2, 330, 28, Color{ 230, 110, 110, 255 });
+
+        int mw = MeasureText(message.c_str(), 16);
+        DrawText(message.c_str(), (VIRTUAL_WIDTH - mw) / 2, 380, 16, LIGHTGRAY);
+
+        Rectangle okBtn{ (VIRTUAL_WIDTH - 220) / 2.0f, 440, 220, 48 };
+        if (DrawButton(okBtn, "OK", 18, hoverOk, GRAY, Color{ 120,160,220,255 }, RAYWHITE)) {
+            dismissed = true;
+        }
+
+        DrawFadeOverlay(frame++, 15);
+        EndVirtualScreen();
+
+        if (dismissed) break;
+    }
+}
+
+OnlineHostJoinChoice ChooseOnlineHostOrJoin() {
+    OnlineHostJoinChoice result = OnlineHostJoinChoice::CANCELLED;
+    bool picked = false;
+
+    const float btnW = 340, btnH = 70;
+    Rectangle hostBtn{ (VIRTUAL_WIDTH - btnW) / 2.0f, 330, btnW, btnH };
+    Rectangle joinBtn{ (VIRTUAL_WIDTH - btnW) / 2.0f, 420, btnW, btnH };
+    Rectangle backBtn{ (VIRTUAL_WIDTH - 220) / 2.0f, 510, 220, 50 };
+    float hoverHost = 0, hoverJoin = 0, hoverBack = 0;
+    int frame = 0;
+
+    while (!WindowShouldClose()) {
+        BeginVirtualScreen();
+        ClearBackground(DARKGRAY);
+        HandleWindowControls();
+
+        if (IsKeyPressed(KEY_ESCAPE)) { result = OnlineHostJoinChoice::CANCELLED; picked = true; }
+
+        int titleWidth = MeasureText("Play Online with Friends", 32);
+        DrawText("Play Online with Friends", (VIRTUAL_WIDTH - titleWidth) / 2, 220, 32, RAYWHITE);
+        const char* sub = "One of you hosts, the other joins with their IP address";
+        int subW = MeasureText(sub, 15);
+        DrawText(sub, (VIRTUAL_WIDTH - subW) / 2, 265, 15, LIGHTGRAY);
+
+        if (DrawButton(hostBtn, "Host a Game", 22, hoverHost, GRAY, Color{ 120,180,120,255 })) {
+            result = OnlineHostJoinChoice::HOST; picked = true;
+        }
+        if (DrawButton(joinBtn, "Join a Game", 22, hoverJoin, GRAY, Color{ 120,160,220,255 })) {
+            result = OnlineHostJoinChoice::JOIN; picked = true;
+        }
+        if (DrawButton(backBtn, "< Back", 18, hoverBack, Color{ 55,53,50,255 }, Color{ 80,78,75,255 }, RAYWHITE)) {
+            result = OnlineHostJoinChoice::CANCELLED; picked = true;
+        }
+
+        DrawFadeOverlay(frame++, 15);
+        EndVirtualScreen();
+
+        if (picked) break;
+    }
+
+    return result;
+}
+
+std::string PromptJoinAddress() {
+    std::string input;
+    bool cancelled = false;
+    bool picked = false;
+    float hoverConnect = 0, hoverBack = 0;
+    int frame = 0;
+
+    Rectangle fieldRect{ (VIRTUAL_WIDTH - 460) / 2.0f, 390, 460, 56 };
+    Rectangle connectBtn{ (VIRTUAL_WIDTH - 320) / 2.0f, 470, 320, 56 };
+    Rectangle backBtn{ (VIRTUAL_WIDTH - 220) / 2.0f, 540, 220, 48 };
+
+    while (!WindowShouldClose()) {
+        BeginVirtualScreen();
+        ClearBackground(DARKGRAY);
+        HandleWindowControls();
+
+        if (IsKeyPressed(KEY_ESCAPE)) { cancelled = true; picked = true; }
+
+        int ch;
+        while ((ch = GetCharPressed()) != 0) {
+            if (input.size() < 63 && (isalnum(ch) || ch == '.' || ch == ':' || ch == '-')) {
+                input.push_back((char)ch);
+            }
+        }
+        if (IsKeyPressed(KEY_BACKSPACE) && !input.empty()) input.pop_back();
+        if (IsKeyPressed(KEY_ENTER) && !input.empty()) picked = true;
+
+        int titleWidth = MeasureText("Join a Game", 34);
+        DrawText("Join a Game", (VIRTUAL_WIDTH - titleWidth) / 2, 235, 34, RAYWHITE);
+        const char* sub = "Enter your friend's IP address (ask them for it)";
+        int subW = MeasureText(sub, 16);
+        DrawText(sub, (VIRTUAL_WIDTH - subW) / 2, 285, 16, LIGHTGRAY);
+        const char* sub2 = "Add :port after it if they gave you a custom port";
+        int sub2W = MeasureText(sub2, 14);
+        DrawText(sub2, (VIRTUAL_WIDTH - sub2W) / 2, 310, 14, GRAY);
+
+        DrawRectangleRounded(fieldRect, 0.2f, 6, Color{ 30, 28, 26, 255 });
+        DrawRectangleRoundedLinesEx(fieldRect, 0.2f, 6, 2.0f, Color{ 120, 180, 220, 255 });
+        bool blinkOn = (frame / 30) % 2 == 0;
+        std::string shown = input;
+        if (blinkOn) shown += "_";
+        const char* placeholder = "e.g. 192.168.1.23:5455";
+        DrawText(input.empty() ? placeholder : shown.c_str(),
+            (int)fieldRect.x + 16, (int)fieldRect.y + 16, 22, input.empty() ? GRAY : RAYWHITE);
+
+        bool canConnect = !input.empty();
+        Color btnBase = canConnect ? GRAY : Color{ 40,40,40,255 };
+        Color btnHover = canConnect ? Color{ 120,180,120,255 } : Color{ 40,40,40,255 };
+        Color btnText = canConnect ? RAYWHITE : GRAY;
+        if (DrawButton(connectBtn, "Connect", 22, hoverConnect, btnBase, btnHover, btnText) && canConnect) {
+            picked = true;
+        }
+        if (DrawButton(backBtn, "< Back", 18, hoverBack, Color{ 55,53,50,255 }, Color{ 80,78,75,255 }, RAYWHITE)) {
+            cancelled = true; picked = true;
+        }
+
+        DrawFadeOverlay(frame++, 15);
+        EndVirtualScreen();
+
+        if (picked) break;
+    }
+
+    return cancelled ? std::string() : input;
+}
+
+bool RunHostWaitScreen(NetworkSession& session, int port, COLOR hostColor,
+    float timeControlSeconds, std::string& outError) {
+
+    if (!session.startHost(port, outError)) {
+        ShowErrorScreen("Could Not Host", outError);
+        return false;
+    }
+
+    bool cancelled = false;
+    bool justConnected = false;
+    float hoverCancel = 0;
+    int frame = 0;
+    std::string localIp = NetworkSession::getLocalAddressHint();
+
+    while (!WindowShouldClose()) {
+        BeginVirtualScreen();
+        ClearBackground(DARKGRAY);
+        HandleWindowControls();
+
+        if (IsKeyPressed(KEY_ESCAPE)) cancelled = true;
+        if (!cancelled && session.pollAccept()) justConnected = true;
+
+        int titleWidth = MeasureText("Waiting for Opponent...", 32);
+        DrawText("Waiting for Opponent...", (VIRTUAL_WIDTH - titleWidth) / 2, 260, 32, RAYWHITE);
+
+        std::string ipLine = localIp.empty()
+            ? "Share your IP address with your friend, then have them Join"
+            : ("Your IP:  " + localIp + "   Port:  " + std::to_string(port));
+        int ipW = MeasureText(ipLine.c_str(), 20);
+        DrawText(ipLine.c_str(), (VIRTUAL_WIDTH - ipW) / 2, 330, 20, Color{ 140, 205, 255, 255 });
+
+        const char* sub = "Have them choose 'Join a Game' and enter that address.";
+        int subW = MeasureText(sub, 15);
+        DrawText(sub, (VIRTUAL_WIDTH - subW) / 2, 365, 15, LIGHTGRAY);
+
+        int dots = (frame / 20) % 4;
+        std::string waitTxt = "Listening" + std::string(dots, '.');
+        int wtw = MeasureText(waitTxt.c_str(), 18);
+        DrawText(waitTxt.c_str(), (VIRTUAL_WIDTH - wtw) / 2, 425, 18, GRAY);
+
+        Rectangle cancelBtn{ (VIRTUAL_WIDTH - 220) / 2.0f, 480, 220, 50 };
+        if (DrawButton(cancelBtn, "Cancel", 18, hoverCancel, Color{ 150,60,60,255 }, Color{ 180,75,75,255 }, RAYWHITE)) {
+            cancelled = true;
+        }
+
+        DrawFadeOverlay(frame++, 15);
+        EndVirtualScreen();
+
+        if (cancelled || justConnected) break;
+    }
+
+    if (cancelled || WindowShouldClose() || !justConnected) {
+        session.stop();
+        return false;
+    }
+
+    // Peer gets the color the host didn't pick.
+    char assignedColorChar = (hostColor == PWHITE) ? 'B' : 'W';
+    if (!session.sendHandshake(assignedColorChar, timeControlSeconds)) {
+        session.stop();
+        ShowErrorScreen("Connection Lost", "Could not complete the handshake with your opponent.");
+        return false;
+    }
+
+    session.startMessageLoop();
+    return true;
+}
+
+bool RunJoinConnectScreen(NetworkSession& session, const std::string& address, int port,
+    COLOR& outAssignedColor, float& outTimeControlSeconds, std::string& outError) {
+
+    std::string host = address;
+    int actualPort = port;
+    size_t colonPos = address.find(':');
+    if (colonPos != std::string::npos) {
+        host = address.substr(0, colonPos);
+        std::string portPart = address.substr(colonPos + 1);
+        if (!portPart.empty()) {
+            int p = atoi(portPart.c_str());
+            if (p > 0) actualPort = p;
+        }
+    }
+
+    session.beginConnect(host, actualPort);
+
+    bool cancelled = false;
+    ConnectStatus status = ConnectStatus::Pending;
+    float hoverCancel = 0;
+    int frame = 0;
+
+    while (!WindowShouldClose()) {
+        BeginVirtualScreen();
+        ClearBackground(DARKGRAY);
+        HandleWindowControls();
+
+        if (IsKeyPressed(KEY_ESCAPE)) cancelled = true;
+        if (!cancelled) status = session.pollConnect(outError);
+
+        int titleWidth = MeasureText("Connecting...", 32);
+        DrawText("Connecting...", (VIRTUAL_WIDTH - titleWidth) / 2, 290, 32, RAYWHITE);
+
+        std::string addrLine = "Connecting to " + address;
+        int aw = MeasureText(addrLine.c_str(), 18);
+        DrawText(addrLine.c_str(), (VIRTUAL_WIDTH - aw) / 2, 345, 18, LIGHTGRAY);
+
+        if (status == ConnectStatus::Failed) {
+            std::string errLine = outError.empty() ? "Connection failed" : outError;
+            int ew = MeasureText(errLine.c_str(), 16);
+            DrawText(errLine.c_str(), (VIRTUAL_WIDTH - ew) / 2, 400, 16, Color{ 230,110,110,255 });
+        }
+
+        Rectangle cancelBtn{ (VIRTUAL_WIDTH - 220) / 2.0f, 460, 220, 50 };
+        const char* btnLabel = (status == ConnectStatus::Failed) ? "< Back" : "Cancel";
+        if (DrawButton(cancelBtn, btnLabel, 18, hoverCancel, Color{ 150,60,60,255 }, Color{ 180,75,75,255 }, RAYWHITE)) {
+            cancelled = true;
+        }
+
+        DrawFadeOverlay(frame++, 15);
+        EndVirtualScreen();
+
+        if (cancelled || status == ConnectStatus::Success) break;
+    }
+
+    if (cancelled) {
+        session.cancelConnect();
+        return false;
+    }
+    if (WindowShouldClose()) {
+        session.cancelConnect();
+        return false;
+    }
+
+    char colorChar = 'W';
+    float t = -1.0f;
+    if (!session.receiveHandshake(colorChar, t, outError)) {
+        session.stop();
+        ShowErrorScreen("Connection Lost", outError.empty() ? "Could not complete the handshake with the host." : outError);
+        return false;
+    }
+
+    outAssignedColor = (colorChar == 'B') ? PBLACK : PWHITE;
+    outTimeControlSeconds = t;
+    session.startMessageLoop();
+    return true;
 }

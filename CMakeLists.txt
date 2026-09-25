@@ -11,6 +11,7 @@ if(APPLE)
 endif()
 
 find_package(raylib REQUIRED)
+find_package(Threads REQUIRED)
 
 add_executable(ChessGame
     Source.cpp
@@ -24,9 +25,10 @@ add_executable(ChessGame
     King.cpp
     utility.cpp
     UCIEngine.cpp
+    Network.cpp
 )
 
-target_link_libraries(ChessGame raylib)
+target_link_libraries(ChessGame raylib Threads::Threads)
 
 # macOS needs these system frameworks for raylib to link
 if(APPLE)

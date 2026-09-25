@@ -57,8 +57,16 @@ Full set of high-fidelity audio triggers:
 - **Game Modes**:
   - **Play vs Bot**: Select your color (White or Black), choose from 6 bot tiers, and select a time control.
   - **Pass & Play (2 Players)**: Local two-player game with optional board flipping.
+  - **Play Online with Friends**: Direct peer-to-peer online play over TCP — see [Playing Online](#-playing-online-with-friends) below.
   - **Load Saved Game**: Resume saved matches instantly.
 - **Time Controls**: 3 min (Bullet), 5 min (Blitz), 10 min (Rapid), 15 min (Classical), or Untimed.
+
+### 🌐 Playing Online with Friends
+- **Host or Join**: One player picks "Host a Game" (choosing color + time control), the other picks "Join a Game" and enters the host's IP address (`ip` or `ip:port`).
+- **Direct peer-to-peer TCP**, default port `5455` — no account, matchmaking server, or internet service required.
+- **Same network**: works immediately once one player shares their LAN IP (shown on the "Waiting for Opponent" screen).
+- **Different networks**: the host needs to forward port 5455 (TCP) to their machine on their router, or both players can put their machines on the same virtual LAN with a tool like [Tailscale](https://tailscale.com) or Hamachi and use that IP instead.
+- **In-match**: moves, resignations, and draw offers/acceptances sync live; Undo/Redo and mid-match "New Game" are disabled online since they'd desync the two boards. A dropped connection ends the game with a clear message on the other side.
 
 ### ⚙️ Full Chess Rules Implementation
 - **Castling**: Kingside (`O-O`) and Queenside (`O-O-O`), with complete path-clear and check-validation rules.
@@ -78,6 +86,7 @@ graph TD
     Main[Source.cpp - Main Loop & UI] --> Board[Board.h / Board.cpp]
     Main --> UCIEngine[UCIEngine.h / UCIEngine.cpp]
     Main --> Utility[utility.h / utility.cpp]
+    Main --> Network[Network.h / Network.cpp]
     
     Board --> Piece[Piece Base Class]
     Piece --> Pawn[Pawn]
@@ -89,6 +98,7 @@ graph TD
     
     UCIEngine --> Stockfish[(Stockfish 19 Binary via POSIX Pipe)]
     Utility --> Raylib[(Raylib Graphics & Audio Engine)]
+    Network --> TCP[(Peer TCP Socket - Host / Join)]
 ```
 
 ---
@@ -123,6 +133,7 @@ graph TD
 - **C++17 Compiler** (Clang, GCC, or Apple Clang)
 - **Raylib** 4.5+ or 5.0+
 - *(Optional)* **Stockfish** (e.g. `brew install stockfish` on macOS)
+- Online play and the Stockfish integration both use POSIX sockets/pipes, so they build on macOS and Linux; on Windows, build under WSL for those features.
 
 #### macOS
 ```bash
@@ -176,7 +187,8 @@ cmake --build .
 ├── Queen.h / Queen.cpp     # Queen moves
 ├── King.h / King.cpp       # King moves, check detection, and castling
 ├── UCIEngine.h / .cpp      # Stockfish 19 UCI protocol communication
-├── utility.h / utility.cpp # Virtual screen scaler, UI buttons, sound player
+├── utility.h / utility.cpp # Virtual screen scaler, UI buttons, sound player, online setup screens
+├── Network.h / Network.cpp # Peer-to-peer TCP session for online play (host/join, moves, resign, draw)
 ├── PNGs/                   # High-resolution piece textures
 └── sounds/                 # Chess.com audio files (.mp3 and .wav)
 ```

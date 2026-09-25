@@ -15,6 +15,7 @@
 #include "Queen.h"
 #include "King.h"
 #include "UCIEngine.h"
+#include "Network.h"
 
 #define SCREENWIDTH 1240
 #define SCREENHEIGHT 900
@@ -718,6 +719,82 @@ static void playBotMove(Board& board, COLOR botColor, const BotProfile& profile,
     }
 }
 
+// Applies a move received from the online opponent. Mirrors playBotMove,
+// but the move/promotion is dictated by the peer rather than searched
+// locally. Validates legality defensively before applying it, since the
+// move came off the network. Returns false (and leaves gameOver/finalMessage
+// set) if the received move is illegal, which we treat as a desync.
+static bool applyRemoteMove(Board& board, Position from, Position to, char promoChar,
+    PromotionTextures& promoTex, GameSounds& sounds, COLOR& currentTurn,
+    vector<string>& gameSnapshots,
+    bool& gameOver, const char*& finalMessage, float& scrollY,
+    std::function<void()> drawExtras = nullptr) {
+
+    Piece* moving = board.getPiece(from);
+    if (!moving || moving->getColor() != currentTurn ||
+        !moving->isLegal(&board, from, to) ||
+        board.isSelfCheck(from, to, currentTurn)) {
+        gameOver = true;
+        finalMessage = "CONNECTION ERROR: Received an invalid move";
+        return false;
+    }
+
+    bool wasCapture = (board.getPiece(to) != nullptr) || board.isEnPassantMove(from, to);
+    std::string san = board.generateSAN({ from, to }, promoChar);
+
+    Position rookFrom, rookTo;
+    getCastleRookSquares(moving, from, to, rookFrom, rookTo);
+    animateMove(board, from, to, rookFrom, rookTo, drawExtras);
+
+    board.movePiece(from, to);
+
+    Piece* movedPiece = board.getPiece(to);
+    int lastRow = (currentTurn == PWHITE) ? 0 : 7;
+    if (movedPiece && dynamic_cast<Pawn*>(movedPiece) && to.row == lastRow) {
+        Texture2D promoTexture = (currentTurn == PWHITE) ? promoTex.whiteQueen : promoTex.blackQueen;
+        switch (tolower(promoChar)) {
+        case 'r':
+            promoTexture = (currentTurn == PWHITE) ? promoTex.whiteRook : promoTex.blackRook;
+            board.setPiece(to, new Rook(currentTurn, promoTexture));
+            break;
+        case 'b':
+            promoTexture = (currentTurn == PWHITE) ? promoTex.whiteBishop : promoTex.blackBishop;
+            board.setPiece(to, new Bishop(currentTurn, promoTexture));
+            break;
+        case 'n':
+        case 'k':
+            promoTexture = (currentTurn == PWHITE) ? promoTex.whiteKnight : promoTex.blackKnight;
+            board.setPiece(to, new Knight(currentTurn, promoTexture));
+            break;
+        case 'q':
+        default:
+            promoTexture = (currentTurn == PWHITE) ? promoTex.whiteQueen : promoTex.blackQueen;
+            board.setPiece(to, new Queen(currentTurn, promoTexture));
+            break;
+        }
+    }
+
+    board.recordMove({ from, to }, san, currentTurn, promoChar);
+    currentTurn = (currentTurn == PWHITE) ? PBLACK : PWHITE;
+    board.save(currentTurn);
+    gameSnapshots.push_back(board.snapshot(currentTurn));
+
+    scrollY = 99999.0f;
+
+    checkEndConditions(board, currentTurn, gameOver, finalMessage);
+    bool nowInCheck = !gameOver && board.isInCheck(currentTurn);
+    bool isCastle = (dynamic_cast<King*>(moving) && abs(to.col - from.col) == 2);
+    bool isPromote = (promoChar != '\0');
+    bool isCheckmate = gameOver && finalMessage && strstr(finalMessage, "CHECKMATE");
+    playChessSound(sounds, false, wasCapture, isCastle, isPromote, nowInCheck, gameOver, isCheckmate);
+
+    if (GetStockfishEngine().isAvailable()) {
+        GetStockfishEngine().evaluatePosition(board.toFEN(currentTurn), 80);
+    }
+
+    return true;
+}
+
 int main() {
     srand((unsigned int)time(nullptr));
 
@@ -745,6 +822,12 @@ int main() {
         COLOR humanColor = PWHITE;
         COLOR botColor = PBLACK;
         BotProfile botProfile = BOT_PROFILES[2];
+
+        NetworkSession netSession;
+        bool isOnline = false;
+        COLOR localColor = PWHITE;
+        bool drawOfferSent = false;
+        bool drawOfferReceived = false;
 
         bool untimedGame = false;
         float whiteTime = 600.0f;
@@ -792,6 +875,50 @@ int main() {
                 GetStockfishEngine().newGame();
             }
         }
+        else if (choice == NEW_GAME_ONLINE) {
+            board.initillize();
+            currentTurn = PWHITE;
+            vsBot = false;
+            isOnline = true;
+
+            OnlineHostJoinChoice mode = ChooseOnlineHostOrJoin();
+            if (mode == OnlineHostJoinChoice::CANCELLED || WindowShouldClose()) continue;
+
+            bool connected = false;
+            std::string netError;
+
+            if (mode == OnlineHostJoinChoice::HOST) {
+                int c = ChooseColor();
+                if (c < 0 || WindowShouldClose()) continue;
+                localColor = static_cast<COLOR>(c);
+
+                float t = ChooseTimeControl();
+                if (t < -500.0f || WindowShouldClose()) continue;
+                untimedGame = (t < 0);
+                whiteTime = untimedGame ? 0 : t;
+                blackTime = untimedGame ? 0 : t;
+
+                connected = RunHostWaitScreen(netSession, ONLINE_DEFAULT_PORT, localColor, t, netError);
+            } else {
+                std::string address = PromptJoinAddress();
+                if (address.empty() || WindowShouldClose()) continue;
+
+                float remoteTime = -1.0f;
+                connected = RunJoinConnectScreen(netSession, address, ONLINE_DEFAULT_PORT,
+                    localColor, remoteTime, netError);
+                if (connected) {
+                    untimedGame = (remoteTime < 0);
+                    whiteTime = untimedGame ? 0 : remoteTime;
+                    blackTime = untimedGame ? 0 : remoteTime;
+                }
+            }
+
+            if (!connected || WindowShouldClose()) continue;
+
+            if (localColor == PBLACK) {
+                board.flipped = true;
+            }
+        }
         else if (choice == LOAD_GAME) {
             board.load(currentTurn);
             vsBot = false;
@@ -814,6 +941,11 @@ int main() {
         bool showExitConfirmModal = false;
         std::string notifyBannerText = "";
         float notifyBannerTimer = 0.0f;
+
+        if (isOnline) {
+            notifyBannerText = "Connected! You are playing " + std::string(localColor == PWHITE ? "White" : "Black") + ".";
+            notifyBannerTimer = 3.5f;
+        }
 
         // Move review scrubbing state & snapshots
         std::vector<std::string> gameSnapshots;
@@ -901,6 +1033,20 @@ int main() {
         if (gameOver) showGameOverModal = true;
         if (GetStockfishEngine().isAvailable()) {
             GetStockfishEngine().evaluatePosition(board.toFEN(currentTurn), 80);
+        }
+    };
+
+    // After a local move is applied in online mode, ship it to the peer.
+    // The move's promotion char (if any) was just recorded by
+    // executeHumanMove, so read it back off the move history rather than
+    // threading it through as an extra parameter.
+    auto sendLocalMoveIfOnline = [&](Position mFrom, Position mTo) {
+        if (!isOnline || !netSession.isConnected()) return;
+        char sentPromo = board.getMoveHistory().empty() ? '\0' : board.getMoveHistory().back().promoChar;
+        netSession.sendMove(mFrom.row, mFrom.col, mTo.row, mTo.col, sentPromo);
+        if (drawOfferReceived) {
+            netSession.sendDrawDecline();
+            drawOfferReceived = false;
         }
     };
 
@@ -1055,6 +1201,24 @@ int main() {
                             showGameOverModal = true;
                             if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
                         }
+                    } else if (isOnline) {
+                        if (netSession.isConnected()) {
+                            if (drawOfferReceived) {
+                                netSession.sendDrawAccept();
+                                gameOver = true;
+                                finalMessage = "DRAW BY AGREEMENT";
+                                showGameOverModal = true;
+                                if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
+                            } else if (!drawOfferSent) {
+                                netSession.sendDrawOffer();
+                                drawOfferSent = true;
+                                notifyBannerText = "Draw offer sent.";
+                                notifyBannerTimer = 3.0f;
+                            } else {
+                                notifyBannerText = "Draw offer already sent, waiting for reply.";
+                                notifyBannerTimer = 2.0f;
+                            }
+                        }
                     } else {
                         gameOver = true;
                         finalMessage = "DRAW BY MUTUAL AGREEMENT";
@@ -1070,6 +1234,12 @@ int main() {
                         finalMessage = (humanColor == PWHITE) ? "BLACK WINS BY RESIGNATION" : "WHITE WINS BY RESIGNATION";
                         showGameOverModal = true;
                         if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
+                    } else if (isOnline) {
+                        if (netSession.isConnected()) netSession.sendResign();
+                        gameOver = true;
+                        finalMessage = (localColor == PWHITE) ? "BLACK WINS BY RESIGNATION" : "WHITE WINS BY RESIGNATION";
+                        showGameOverModal = true;
+                        if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
                     } else {
                         gameOver = true;
                         finalMessage = (currentTurn == PWHITE) ? "BLACK WINS BY RESIGNATION" : "WHITE WINS BY RESIGNATION";
@@ -1081,10 +1251,10 @@ int main() {
 
             // Row 2: Controls
             if (DrawButton(undoBtn, "Undo", 14, hoverUndo, Color{ 48, 46, 43, 255 }, Color{ 70, 68, 64, 255 })) {
-                performUndo();
+                if (!isOnline) performUndo();
             }
             if (DrawButton(redoBtn, "Redo", 14, hoverRedo, Color{ 48, 46, 43, 255 }, Color{ 70, 68, 64, 255 })) {
-                performRedo();
+                if (!isOnline) performRedo();
             }
             if (DrawButton(flipBtn, "Flip", 14, hoverFlip, Color{ 48, 46, 43, 255 }, Color{ 70, 68, 64, 255 })) {
                 board.toggleFlip();
@@ -1093,26 +1263,31 @@ int main() {
                 board.cycleTheme();
             }
             if (DrawButton(newBtn, "New", 14, hoverNew, Color{ 129, 182, 76, 255 }, Color{ 145, 202, 85, 255 })) {
-                board.initillize();
-                board.clearMoveHistory();
-                undoStack.clear();
-                redoStack.clear();
-                redoMoveHistory.clear();
-                currentTurn = PWHITE;
-                gameSnapshots.clear();
-                gameSnapshots.push_back(board.snapshot(currentTurn));
-                reviewPly = -1;
-                activeReviewLoadedPly = -999;
-                gameOver = false;
-                showGameOverModal = false;
-                whiteWarned10s = false;
-                blackWarned10s = false;
-                botThinkingDelay = 0;
-                if (IsSoundValid(sounds.gameStart)) PlaySound(sounds.gameStart);
-                if (untimedGame) { whiteTime = blackTime = 0; }
-                else { whiteTime = blackTime = 600.0f; }
-                if (vsBot && botProfile.engine == ENGINE_STOCKFISH) {
-                    GetStockfishEngine().newGame();
+                if (isOnline) {
+                    notifyBannerText = "Can't start a new game mid-match online. Resign or return to menu.";
+                    notifyBannerTimer = 2.5f;
+                } else {
+                    board.initillize();
+                    board.clearMoveHistory();
+                    undoStack.clear();
+                    redoStack.clear();
+                    redoMoveHistory.clear();
+                    currentTurn = PWHITE;
+                    gameSnapshots.clear();
+                    gameSnapshots.push_back(board.snapshot(currentTurn));
+                    reviewPly = -1;
+                    activeReviewLoadedPly = -999;
+                    gameOver = false;
+                    showGameOverModal = false;
+                    whiteWarned10s = false;
+                    blackWarned10s = false;
+                    botThinkingDelay = 0;
+                    if (IsSoundValid(sounds.gameStart)) PlaySound(sounds.gameStart);
+                    if (untimedGame) { whiteTime = blackTime = 0; }
+                    else { whiteTime = blackTime = 600.0f; }
+                    if (vsBot && botProfile.engine == ENGINE_STOCKFISH) {
+                        GetStockfishEngine().newGame();
+                    }
                 }
             }
         } else {
@@ -1219,6 +1394,24 @@ int main() {
                     showGameOverModal = true;
                     if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
                 }
+            } else if (isOnline) {
+                if (netSession.isConnected()) {
+                    if (drawOfferReceived) {
+                        netSession.sendDrawAccept();
+                        gameOver = true;
+                        finalMessage = "DRAW BY AGREEMENT";
+                        showGameOverModal = true;
+                        if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
+                    } else if (!drawOfferSent) {
+                        netSession.sendDrawOffer();
+                        drawOfferSent = true;
+                        notifyBannerText = "Draw offer sent.";
+                        notifyBannerTimer = 3.0f;
+                    } else {
+                        notifyBannerText = "Draw offer already sent, waiting for reply.";
+                        notifyBannerTimer = 2.0f;
+                    }
+                }
             } else {
                 gameOver = true;
                 finalMessage = "DRAW BY MUTUAL AGREEMENT";
@@ -1228,10 +1421,10 @@ int main() {
         }
 
         bool ctrlHeld = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
-        if (ctrlHeld && IsKeyPressed(KEY_Z)) {
+        if (ctrlHeld && IsKeyPressed(KEY_Z) && !isOnline) {
             performUndo();
         }
-        if (ctrlHeld && IsKeyPressed(KEY_Y)) {
+        if (ctrlHeld && IsKeyPressed(KEY_Y) && !isOnline) {
             performRedo();
         }
 
@@ -1297,9 +1490,10 @@ int main() {
                     notifyBannerText = "Review mode active. Click [>|] or press Right Arrow to resume live play.";
                     notifyBannerTimer = 2.0f;
                 }
-            } else if (vsBot && currentTurn == botColor) {
+            } else if ((vsBot && currentTurn == botColor) ||
+                       (isOnline && (currentTurn != localColor || !netSession.isConnected()))) {
                 if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && mouseOnBoard) {
-                    // Pre-move sound when player tries to move during bot's turn
+                    // Pre-move sound when player tries to move out of turn
                     if (IsSoundValid(sounds.premove)) PlaySound(sounds.premove);
                 }
             } else {
@@ -1332,8 +1526,11 @@ int main() {
                                 isDragging = true;
                                 board.setDraggingPiece(selected);
                             } else if (board.highlight[boardRow][boardCol]) {
+                                Position moveFrom = selected;
+                                Position moveTo = { boardRow, boardCol };
                                 executeHumanMove(board, selected, { boardRow, boardCol }, currentTurn, promoTex, sounds,
                                     undoStack, redoStack, redoMoveHistory, gameSnapshots, gameOver, finalMessage, historyScrollY, drawExtras);
+                                sendLocalMoveIfOnline(moveFrom, moveTo);
                                 reviewPly = -1;
                                 if (gameOver) showGameOverModal = true;
                                 selected = { -1, -1 };
@@ -1366,8 +1563,11 @@ int main() {
 
                         if (mouseOnBoard && (boardRow != dragStart.row || boardCol != dragStart.col)) {
                             if (board.highlight[boardRow][boardCol]) {
+                                Position moveFrom = dragStart;
+                                Position moveTo = { boardRow, boardCol };
                                 executeHumanMove(board, dragStart, { boardRow, boardCol }, currentTurn, promoTex, sounds,
                                     undoStack, redoStack, redoMoveHistory, gameSnapshots, gameOver, finalMessage, historyScrollY, drawExtras);
+                                sendLocalMoveIfOnline(moveFrom, moveTo);
                                 reviewPly = -1;
                                 if (gameOver) showGameOverModal = true;
                                 selected = { -1, -1 };
@@ -1397,6 +1597,66 @@ int main() {
             }
         } else {
             botThinkingDelay = 0;
+        }
+
+        // --- 3b. Online: process incoming network messages ---
+        if (isOnline) {
+            NetMessage netMsg;
+            while (netSession.poll(netMsg)) {
+                switch (netMsg.type) {
+                case NetMsgType::Move:
+                    if (!gameOver && reviewPly == -1) {
+                        drawOfferSent = false;
+                        undoStack.push_back(board.snapshot(currentTurn));
+                        redoStack.clear();
+                        redoMoveHistory.clear();
+                        bool okMove = applyRemoteMove(board, { netMsg.fromRow, netMsg.fromCol },
+                            { netMsg.toRow, netMsg.toCol }, netMsg.promo,
+                            promoTex, sounds, currentTurn, gameSnapshots, gameOver, finalMessage,
+                            historyScrollY, drawExtras);
+                        if (gameOver) showGameOverModal = true;
+                        if (!okMove) netSession.stop();
+                    }
+                    break;
+                case NetMsgType::Resign:
+                    if (!gameOver) {
+                        gameOver = true;
+                        finalMessage = (localColor == PWHITE) ? "WHITE WINS BY RESIGNATION" : "BLACK WINS BY RESIGNATION";
+                        showGameOverModal = true;
+                        if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
+                    }
+                    break;
+                case NetMsgType::DrawOffer:
+                    if (!gameOver) {
+                        drawOfferReceived = true;
+                        notifyBannerText = "Opponent offers a draw. Click Draw to accept.";
+                        notifyBannerTimer = 4.0f;
+                        if (IsSoundValid(sounds.notify)) PlaySound(sounds.notify);
+                    }
+                    break;
+                case NetMsgType::DrawAccept:
+                    if (!gameOver) {
+                        gameOver = true;
+                        finalMessage = "DRAW BY AGREEMENT";
+                        showGameOverModal = true;
+                        if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
+                    }
+                    break;
+                case NetMsgType::DrawDecline:
+                    drawOfferSent = false;
+                    notifyBannerText = "Opponent declined the draw offer.";
+                    notifyBannerTimer = 3.0f;
+                    break;
+                case NetMsgType::Disconnected:
+                    if (!gameOver) {
+                        gameOver = true;
+                        finalMessage = "OPPONENT DISCONNECTED";
+                        showGameOverModal = true;
+                        if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
+                    }
+                    break;
+                }
+            }
         }
 
         // --- 4. Main Single-Pass Virtual Screen Render ---
@@ -1482,7 +1742,13 @@ int main() {
             Rectangle modalReviewBtn{ mx + 50, my + 172, 340, 40 };
             Rectangle modalMenuBtn  { mx + 50, my + 224, 340, 40 };
 
-            if (DrawButton(modalNewBtn, "Play Again", 20, hoverModalNew, Color{ 129, 182, 76, 255 }, Color{ 145, 202, 85, 255 })) {
+            if (isOnline) {
+                const char* onlineNote = "Return to the menu to start a new online game";
+                int onw = MeasureText(onlineNote, 13);
+                DrawText(onlineNote, (int)(mx + (mw - onw) / 2), (int)(modalNewBtn.y + 16), 13, GRAY);
+            }
+
+            if (!isOnline && DrawButton(modalNewBtn, "Play Again", 20, hoverModalNew, Color{ 129, 182, 76, 255 }, Color{ 145, 202, 85, 255 })) {
                 board.initillize();
                 board.clearMoveHistory();
                 undoStack.clear();
