@@ -1,0 +1,40 @@
+# Prerequisites / OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+
+# Build directories and artifacts
+build/
+bin/
+out/
+cmake-build-*/
+*.o
+*.obj
+*.d
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+ChessGame
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# Local save game files
+haha.txt
+savegame.txt
+
+# Temporary / Scratch files
+scratch/
+/tmp/
