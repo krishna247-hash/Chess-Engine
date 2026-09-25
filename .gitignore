@@ -38,3 +38,4 @@ savegame.txt
 # Temporary / Scratch files
 scratch/
 /tmp/
+network.cfg

@@ -24,6 +24,7 @@ add_executable(ChessGame
     King.cpp
     utility.cpp
     UCIEngine.cpp
+    NetworkManager.cpp
 )
 
 target_link_libraries(ChessGame raylib)

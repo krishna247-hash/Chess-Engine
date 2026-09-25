@@ -53,12 +53,26 @@ Full set of high-fidelity audio triggers:
 - `tenseconds`: Low time warning (<= 10 seconds remaining)
 - `premove`: Moving during opponent's turn
 
+### 🌐 Play Online Worldwide with Friends (Chess.com Style)
+- **Instant 5-Letter Room Codes**: One player clicks **"Create Room"**, selects color and time control, and receives a unique 5-letter code (e.g. `K9X2A`).
+- **One-Click Share & Join**: Click **"📋 Copy Room Code"** to copy to clipboard. Your friend anywhere on Earth launches the game, clicks **"Play Online" -> "Join Room"**, clicks **"📋 Paste Code"**, and joins the match in seconds!
+- **Real-Time Synchronization**: Instant move relaying with piece animations, sound effects, and digital clocks.
+- **In-Game Diplomacy**:
+  - Live Draw Offers with interactive Accept / Decline modals.
+  - Resignation and automatic victory declarations.
+  - Instant Rematch Offers with automatic color switching!
+- **Ping & Latency Monitor**: Real-time ping latency badge on opponent card (e.g. `Online • 🟢 28ms`).
+- **Turn Enforcement**: Prevents moving during opponent's turn with Chess.com premove sounds.
+- **Zero-Dependency Native Sockets**: Cross-platform, background-threaded client using native POSIX sockets on macOS/Linux and Winsock on Windows.
+- **Free Cloud Hosting Included**: Includes zero-dependency Node.js (`server/server.js`) and Python 3 (`server/server.py`) servers ready for free 24/7 hosting on Render, Railway, Fly.io, or instant tunneling via Ngrok.
+
 ### ⏱️ Time Controls & Game Modes
 - **Game Modes**:
+  - **Play Online (Worldwide) 🌐**: Connect with friends anywhere across the globe using 5-character room codes.
   - **Play vs Bot**: Select your color (White or Black), choose from 6 bot tiers, and select a time control.
   - **Pass & Play (2 Players)**: Local two-player game with optional board flipping.
   - **Load Saved Game**: Resume saved matches instantly.
-- **Time Controls**: 3 min (Bullet), 5 min (Blitz), 10 min (Rapid), 15 min (Classical), or Untimed.
+- **Time Controls**: 1 min (Bullet), 3 min (Blitz), 5 min (Blitz), 10 min (Rapid), 15 min (Rapid), or Untimed.
 
 ### ⚙️ Full Chess Rules Implementation
 - **Castling**: Kingside (`O-O`) and Queenside (`O-O-O`), with complete path-clear and check-validation rules.
@@ -78,6 +92,7 @@ graph TD
     Main[Source.cpp - Main Loop & UI] --> Board[Board.h / Board.cpp]
     Main --> UCIEngine[UCIEngine.h / UCIEngine.cpp]
     Main --> Utility[utility.h / utility.cpp]
+    Main --> Network[NetworkManager.h / NetworkManager.cpp]
     
     Board --> Piece[Piece Base Class]
     Piece --> Pawn[Pawn]
@@ -89,6 +104,7 @@ graph TD
     
     UCIEngine --> Stockfish[(Stockfish 19 Binary via POSIX Pipe)]
     Utility --> Raylib[(Raylib Graphics & Audio Engine)]
+    Network --> CloudServer[(Worldwide Cloud Relay Server - Node.js / Python)]
 ```
 
 ---

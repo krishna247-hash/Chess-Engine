@@ -15,6 +15,7 @@
 #include "Queen.h"
 #include "King.h"
 #include "UCIEngine.h"
+#include "NetworkManager.h"
 
 #define SCREENWIDTH 1240
 #define SCREENHEIGHT 900
@@ -742,6 +743,12 @@ int main() {
         Position selected = { -1, -1 };
         COLOR currentTurn = PWHITE;
         bool vsBot = false;
+        bool isOnline = false;
+        std::string onlineRoomCode = "";
+        std::string onlineOpponentName = "Opponent";
+        std::string onlineMyName = "Player";
+        float onlineTimeControl = 600.0f;
+
         COLOR humanColor = PWHITE;
         COLOR botColor = PBLACK;
         BotProfile botProfile = BOT_PROFILES[2];
@@ -763,6 +770,24 @@ int main() {
             untimedGame = (t < 0);
             whiteTime = untimedGame ? 0 : t;
             blackTime = untimedGame ? 0 : t;
+        }
+        else if (choice == PLAY_ONLINE) {
+            COLOR myCol = PWHITE;
+            bool lobbyOk = ShowOnlineLobby(onlineRoomCode, myCol, onlineTimeControl, onlineOpponentName, onlineMyName);
+            if (!lobbyOk || WindowShouldClose()) continue;
+
+            board.initillize();
+            currentTurn = PWHITE;
+            vsBot = false;
+            isOnline = true;
+            humanColor = myCol;
+            botColor = (myCol == PWHITE) ? PBLACK : PWHITE;
+            untimedGame = (onlineTimeControl < 0);
+            whiteTime = untimedGame ? 0 : onlineTimeControl;
+            blackTime = untimedGame ? 0 : onlineTimeControl;
+            if (humanColor == PBLACK) {
+                board.flipped = true;
+            }
         }
         else if (choice == NEW_GAME_BOT) {
             board.initillize();
@@ -798,7 +823,7 @@ int main() {
         }
 
         // Initial position evaluation
-        if (GetStockfishEngine().isAvailable()) {
+        if (!isOnline && GetStockfishEngine().isAvailable()) {
             GetStockfishEngine().evaluatePosition(board.toFEN(currentTurn), 100);
         }
 
@@ -828,6 +853,10 @@ int main() {
         float hoverModalNew = 0, hoverModalReview = 0, hoverModalMenu = 0;
         float hoverExitSave = 0, hoverExitNoSave = 0, hoverExitCancel = 0;
         float hoverNavFirst = 0, hoverNavPrev = 0, hoverNavNext = 0, hoverNavLast = 0;
+        bool showOpponentDrawOfferModal = false;
+        bool showRematchOfferedModal = false;
+        float hoverDrawAccept = 0, hoverDrawDecline = 0;
+        float hoverRematchAccept = 0, hoverRematchDecline = 0;
 
         // Play Game Start sound
         if (IsSoundValid(sounds.gameStart)) PlaySound(sounds.gameStart);
@@ -924,7 +953,12 @@ int main() {
 
         const char* topName;
         const char* topSub;
-        if (vsBot) {
+        std::string topOnlineSub;
+        if (isOnline) {
+            topName = onlineOpponentName.c_str();
+            topOnlineSub = TextFormat("Online • 🟢 %dms", NetworkManager::getInstance().getPingMs());
+            topSub = topOnlineSub.c_str();
+        } else if (vsBot) {
             if (topIsBot) {
                 topName = botProfile.name;
                 topSub = botThinking ? "Thinking..." : botProfile.engineBadge;
@@ -944,7 +978,7 @@ int main() {
 
         // Top Player Card Last Move calculation
         COLOR topColor = topIsWhite ? PWHITE : PBLACK;
-        bool topIsOpponent = vsBot && (botColor == topColor);
+        bool topIsOpponent = isOnline || (vsBot && (botColor == topColor));
         int topMoveIdx = findLastMoveIndex(board.getMoveHistory(), topColor);
         std::string topMoveBadge;
         if (topMoveIdx >= 0) {
@@ -978,7 +1012,12 @@ int main() {
 
         const char* botName;
         const char* botSub;
-        if (vsBot) {
+        std::string botOnlineSub;
+        if (isOnline) {
+            botName = onlineMyName.c_str();
+            botOnlineSub = TextFormat("You • Room %s", onlineRoomCode.c_str());
+            botSub = botOnlineSub.c_str();
+        } else if (vsBot) {
             if (botIsBot) {
                 botName = botProfile.name;
                 botSub = botThinking ? "Thinking..." : botProfile.engineBadge;
@@ -1035,6 +1074,7 @@ int main() {
             // Row 1: Actions
             if (DrawButton(menuBtn, "< Menu", 15, hoverMenu, Color{ 50, 48, 45, 255 }, Color{ 75, 73, 70, 255 }, RAYWHITE)) {
                 if (gameOver) {
+                    if (isOnline) NetworkManager::getInstance().disconnect();
                     returnToMenu = true;
                 } else {
                     showExitConfirmModal = true;
@@ -1042,7 +1082,11 @@ int main() {
             }
             if (DrawButton(drawBtn, "Draw", 15, hoverDraw, Color{ 50, 48, 45, 255 }, Color{ 160, 140, 50, 255 }, !gameOver ? RAYWHITE : GRAY)) {
                 if (!gameOver) {
-                    if (vsBot) {
+                    if (isOnline) {
+                        NetworkManager::getInstance().sendDrawOffer();
+                        notifyBannerText = "Draw offer sent to opponent...";
+                        notifyBannerTimer = 3.0f;
+                    } else if (vsBot) {
                         float sfEval = GetStockfishEngine().isAvailable() ? GetStockfishEngine().getWhiteAdvantagePawns() : (float)board.getMaterialAdvantage();
                         float botAdv = (botColor == PWHITE) ? sfEval : -sfEval;
                         if (botAdv > 2.2f && botProfile.rating >= 1600) {
@@ -1065,7 +1109,13 @@ int main() {
             }
             if (DrawButton(resignBtn, "Resign", 15, hoverResign, Color{ 68, 36, 36, 255 }, Color{ 175, 45, 45, 255 }, !gameOver ? RAYWHITE : GRAY)) {
                 if (!gameOver) {
-                    if (vsBot) {
+                    if (isOnline) {
+                        NetworkManager::getInstance().sendResign();
+                        gameOver = true;
+                        finalMessage = (humanColor == PWHITE) ? "BLACK WINS (You Resigned)" : "WHITE WINS (You Resigned)";
+                        showGameOverModal = true;
+                        if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
+                    } else if (vsBot) {
                         gameOver = true;
                         finalMessage = (humanColor == PWHITE) ? "BLACK WINS BY RESIGNATION" : "WHITE WINS BY RESIGNATION";
                         showGameOverModal = true;
@@ -1081,10 +1131,20 @@ int main() {
 
             // Row 2: Controls
             if (DrawButton(undoBtn, "Undo", 14, hoverUndo, Color{ 48, 46, 43, 255 }, Color{ 70, 68, 64, 255 })) {
-                performUndo();
+                if (isOnline) {
+                    notifyBannerText = "Undo is disabled in Online Multiplayer.";
+                    notifyBannerTimer = 2.5f;
+                } else {
+                    performUndo();
+                }
             }
             if (DrawButton(redoBtn, "Redo", 14, hoverRedo, Color{ 48, 46, 43, 255 }, Color{ 70, 68, 64, 255 })) {
-                performRedo();
+                if (isOnline) {
+                    notifyBannerText = "Redo is disabled in Online Multiplayer.";
+                    notifyBannerTimer = 2.5f;
+                } else {
+                    performRedo();
+                }
             }
             if (DrawButton(flipBtn, "Flip", 14, hoverFlip, Color{ 48, 46, 43, 255 }, Color{ 70, 68, 64, 255 })) {
                 board.toggleFlip();
@@ -1093,26 +1153,31 @@ int main() {
                 board.cycleTheme();
             }
             if (DrawButton(newBtn, "New", 14, hoverNew, Color{ 129, 182, 76, 255 }, Color{ 145, 202, 85, 255 })) {
-                board.initillize();
-                board.clearMoveHistory();
-                undoStack.clear();
-                redoStack.clear();
-                redoMoveHistory.clear();
-                currentTurn = PWHITE;
-                gameSnapshots.clear();
-                gameSnapshots.push_back(board.snapshot(currentTurn));
-                reviewPly = -1;
-                activeReviewLoadedPly = -999;
-                gameOver = false;
-                showGameOverModal = false;
-                whiteWarned10s = false;
-                blackWarned10s = false;
-                botThinkingDelay = 0;
-                if (IsSoundValid(sounds.gameStart)) PlaySound(sounds.gameStart);
-                if (untimedGame) { whiteTime = blackTime = 0; }
-                else { whiteTime = blackTime = 600.0f; }
-                if (vsBot && botProfile.engine == ENGINE_STOCKFISH) {
-                    GetStockfishEngine().newGame();
+                if (isOnline) {
+                    notifyBannerText = "In online games, use Resign or Menu to start a new match.";
+                    notifyBannerTimer = 3.0f;
+                } else {
+                    board.initillize();
+                    board.clearMoveHistory();
+                    undoStack.clear();
+                    redoStack.clear();
+                    redoMoveHistory.clear();
+                    currentTurn = PWHITE;
+                    gameSnapshots.clear();
+                    gameSnapshots.push_back(board.snapshot(currentTurn));
+                    reviewPly = -1;
+                    activeReviewLoadedPly = -999;
+                    gameOver = false;
+                    showGameOverModal = false;
+                    whiteWarned10s = false;
+                    blackWarned10s = false;
+                    botThinkingDelay = 0;
+                    if (IsSoundValid(sounds.gameStart)) PlaySound(sounds.gameStart);
+                    if (untimedGame) { whiteTime = blackTime = 0; }
+                    else { whiteTime = blackTime = 600.0f; }
+                    if (vsBot && botProfile.engine == ENGINE_STOCKFISH) {
+                        GetStockfishEngine().newGame();
+                    }
                 }
             }
         } else {
@@ -1297,6 +1362,10 @@ int main() {
                     notifyBannerText = "Review mode active. Click [>|] or press Right Arrow to resume live play.";
                     notifyBannerTimer = 2.0f;
                 }
+            } else if (isOnline && currentTurn != humanColor) {
+                if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && mouseOnBoard) {
+                    if (IsSoundValid(sounds.premove)) PlaySound(sounds.premove);
+                }
             } else if (vsBot && currentTurn == botColor) {
                 if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && mouseOnBoard) {
                     // Pre-move sound when player tries to move during bot's turn
@@ -1332,10 +1401,18 @@ int main() {
                                 isDragging = true;
                                 board.setDraggingPiece(selected);
                             } else if (board.highlight[boardRow][boardCol]) {
-                                executeHumanMove(board, selected, { boardRow, boardCol }, currentTurn, promoTex, sounds,
+                                Position from = selected;
+                                Position to = { boardRow, boardCol };
+                                executeHumanMove(board, from, to, currentTurn, promoTex, sounds,
                                     undoStack, redoStack, redoMoveHistory, gameSnapshots, gameOver, finalMessage, historyScrollY, drawExtras);
                                 reviewPly = -1;
                                 if (gameOver) showGameOverModal = true;
+                                if (isOnline && !board.getMoveHistory().empty()) {
+                                    const auto& lastRec = board.getMoveHistory().back();
+                                    float myTimeLeft = (humanColor == PWHITE) ? whiteTime : blackTime;
+                                    NetworkManager::getInstance().sendMove(from.row, from.col, to.row, to.col,
+                                        lastRec.san, lastRec.promoChar, myTimeLeft);
+                                }
                                 selected = { -1, -1 };
                                 board.clearHighlight();
                                 isDragging = false;
@@ -1366,10 +1443,18 @@ int main() {
 
                         if (mouseOnBoard && (boardRow != dragStart.row || boardCol != dragStart.col)) {
                             if (board.highlight[boardRow][boardCol]) {
-                                executeHumanMove(board, dragStart, { boardRow, boardCol }, currentTurn, promoTex, sounds,
+                                Position from = dragStart;
+                                Position to = { boardRow, boardCol };
+                                executeHumanMove(board, from, to, currentTurn, promoTex, sounds,
                                     undoStack, redoStack, redoMoveHistory, gameSnapshots, gameOver, finalMessage, historyScrollY, drawExtras);
                                 reviewPly = -1;
                                 if (gameOver) showGameOverModal = true;
+                                if (isOnline && !board.getMoveHistory().empty()) {
+                                    const auto& lastRec = board.getMoveHistory().back();
+                                    float myTimeLeft = (humanColor == PWHITE) ? whiteTime : blackTime;
+                                    NetworkManager::getInstance().sendMove(from.row, from.col, to.row, to.col,
+                                        lastRec.san, lastRec.promoChar, myTimeLeft);
+                                }
                                 selected = { -1, -1 };
                                 board.clearHighlight();
                                 botThinkingDelay = 0;
@@ -1397,6 +1482,124 @@ int main() {
             }
         } else {
             botThinkingDelay = 0;
+        }
+
+        // --- 3b. Online Opponent Move & Network Events ---
+        if (isOnline) {
+            NetEvent netEv;
+            while (NetworkManager::getInstance().pollEvent(netEv)) {
+                if (netEv.type == NET_EVENT_OPPONENT_MOVE) {
+                    Position oppFrom = { netEv.move.fromRow, netEv.move.fromCol };
+                    Position oppTo = { netEv.move.toRow, netEv.move.toCol };
+                    char oppPromo = netEv.move.promo;
+                    std::string oppSan = netEv.move.san;
+
+                    undoStack.push_back(board.snapshot(currentTurn));
+                    redoStack.clear();
+                    redoMoveHistory.clear();
+
+                    bool wasCapture = (board.getPiece(oppTo) != nullptr) || board.isEnPassantMove(oppFrom, oppTo);
+                    if (oppSan.empty()) oppSan = board.generateSAN({ oppFrom, oppTo }, oppPromo);
+
+                    Position rookFrom, rookTo;
+                    getCastleRookSquares(board.getPiece(oppFrom), oppFrom, oppTo, rookFrom, rookTo);
+                    animateMove(board, oppFrom, oppTo, rookFrom, rookTo, drawExtras);
+
+                    board.movePiece(oppFrom, oppTo);
+
+                    Piece* oppMoved = board.getPiece(oppTo);
+                    int lastRow = (currentTurn == PWHITE) ? 0 : 7;
+                    if (oppMoved && dynamic_cast<Pawn*>(oppMoved) && oppTo.row == lastRow) {
+                        Texture2D promoTexture = (currentTurn == PWHITE) ? promoTex.whiteQueen : promoTex.blackQueen;
+                        switch (tolower(oppPromo)) {
+                        case 'r':
+                            promoTexture = (currentTurn == PWHITE) ? promoTex.whiteRook : promoTex.blackRook;
+                            board.setPiece(oppTo, new Rook(currentTurn, promoTexture));
+                            break;
+                        case 'b':
+                            promoTexture = (currentTurn == PWHITE) ? promoTex.whiteBishop : promoTex.blackBishop;
+                            board.setPiece(oppTo, new Bishop(currentTurn, promoTexture));
+                            break;
+                        case 'n':
+                        case 'k':
+                            promoTexture = (currentTurn == PWHITE) ? promoTex.whiteKnight : promoTex.blackKnight;
+                            board.setPiece(oppTo, new Knight(currentTurn, promoTexture));
+                            break;
+                        case 'q':
+                        default:
+                            promoTexture = (currentTurn == PWHITE) ? promoTex.whiteQueen : promoTex.blackQueen;
+                            board.setPiece(oppTo, new Queen(currentTurn, promoTexture));
+                            break;
+                        }
+                    }
+
+                    board.recordMove({ oppFrom, oppTo }, oppSan, currentTurn, oppPromo);
+                    currentTurn = (currentTurn == PWHITE) ? PBLACK : PWHITE;
+                    board.save(currentTurn);
+                    gameSnapshots.push_back(board.snapshot(currentTurn));
+                    historyScrollY = 99999.0f;
+
+                    checkEndConditions(board, currentTurn, gameOver, finalMessage);
+                    bool nowInCheck = !gameOver && board.isInCheck(currentTurn);
+                    bool isCastle = (oppMoved && dynamic_cast<King*>(oppMoved) && abs(oppTo.col - oppFrom.col) == 2);
+                    bool isPromote = (oppPromo != '\0');
+                    bool isCheckmate = gameOver && finalMessage && strstr(finalMessage, "CHECKMATE");
+                    playChessSound(sounds, false, wasCapture, isCastle, isPromote, nowInCheck, gameOver, isCheckmate);
+                    if (gameOver) showGameOverModal = true;
+                    reviewPly = -1;
+                }
+                else if (netEv.type == NET_EVENT_DRAW_OFFERED) {
+                    showOpponentDrawOfferModal = true;
+                    if (IsSoundValid(sounds.notify)) PlaySound(sounds.notify);
+                }
+                else if (netEv.type == NET_EVENT_DRAW_ACCEPTED) {
+                    gameOver = true;
+                    finalMessage = "DRAW BY MUTUAL AGREEMENT";
+                    showGameOverModal = true;
+                    if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
+                }
+                else if (netEv.type == NET_EVENT_DRAW_DECLINED) {
+                    notifyBannerText = "Opponent declined the draw offer.";
+                    notifyBannerTimer = 3.0f;
+                }
+                else if (netEv.type == NET_EVENT_OPPONENT_RESIGNED) {
+                    gameOver = true;
+                    finalMessage = (humanColor == PWHITE) ? "WHITE WINS (Opponent Resigned)" : "BLACK WINS (Opponent Resigned)";
+                    showGameOverModal = true;
+                    if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
+                }
+                else if (netEv.type == NET_EVENT_OPPONENT_DISCONNECTED) {
+                    if (!gameOver) {
+                        gameOver = true;
+                        finalMessage = "OPPONENT DISCONNECTED";
+                        showGameOverModal = true;
+                        if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
+                    }
+                }
+                else if (netEv.type == NET_EVENT_REMATCH_OFFERED) {
+                    showRematchOfferedModal = true;
+                    if (IsSoundValid(sounds.notify)) PlaySound(sounds.notify);
+                }
+                else if (netEv.type == NET_EVENT_REMATCH_STARTED) {
+                    board.initillize();
+                    board.clearMoveHistory();
+                    undoStack.clear();
+                    redoStack.clear();
+                    redoMoveHistory.clear();
+                    currentTurn = PWHITE;
+                    gameSnapshots.clear();
+                    gameSnapshots.push_back(board.snapshot(currentTurn));
+                    reviewPly = -1;
+                    activeReviewLoadedPly = -999;
+                    gameOver = false;
+                    showGameOverModal = false;
+                    showRematchOfferedModal = false;
+                    humanColor = netEv.color;
+                    board.flipped = (humanColor == PBLACK);
+                    whiteTime = blackTime = untimedGame ? 0 : onlineTimeControl;
+                    if (IsSoundValid(sounds.gameStart)) PlaySound(sounds.gameStart);
+                }
+            }
         }
 
         // --- 4. Main Single-Pass Virtual Screen Render ---
@@ -1482,32 +1685,40 @@ int main() {
             Rectangle modalReviewBtn{ mx + 50, my + 172, 340, 40 };
             Rectangle modalMenuBtn  { mx + 50, my + 224, 340, 40 };
 
-            if (DrawButton(modalNewBtn, "Play Again", 20, hoverModalNew, Color{ 129, 182, 76, 255 }, Color{ 145, 202, 85, 255 })) {
-                board.initillize();
-                board.clearMoveHistory();
-                undoStack.clear();
-                redoStack.clear();
-                redoMoveHistory.clear();
-                currentTurn = PWHITE;
-                gameSnapshots.clear();
-                gameSnapshots.push_back(board.snapshot(currentTurn));
-                reviewPly = -1;
-                activeReviewLoadedPly = -999;
-                gameOver = false;
-                showGameOverModal = false;
-                whiteWarned10s = false;
-                blackWarned10s = false;
-                botThinkingDelay = 0;
-                if (IsSoundValid(sounds.gameStart)) PlaySound(sounds.gameStart);
-                if (!untimedGame) { whiteTime = blackTime = 600.0f; }
-                if (vsBot && botProfile.engine == ENGINE_STOCKFISH) {
-                    GetStockfishEngine().newGame();
+            const char* newBtnLabel = isOnline ? "Offer Rematch" : "Play Again";
+            if (DrawButton(modalNewBtn, newBtnLabel, 20, hoverModalNew, Color{ 129, 182, 76, 255 }, Color{ 145, 202, 85, 255 })) {
+                if (isOnline) {
+                    NetworkManager::getInstance().sendRematchOffer();
+                    notifyBannerText = "Rematch offer sent to opponent...";
+                    notifyBannerTimer = 3.0f;
+                } else {
+                    board.initillize();
+                    board.clearMoveHistory();
+                    undoStack.clear();
+                    redoStack.clear();
+                    redoMoveHistory.clear();
+                    currentTurn = PWHITE;
+                    gameSnapshots.clear();
+                    gameSnapshots.push_back(board.snapshot(currentTurn));
+                    reviewPly = -1;
+                    activeReviewLoadedPly = -999;
+                    gameOver = false;
+                    showGameOverModal = false;
+                    whiteWarned10s = false;
+                    blackWarned10s = false;
+                    botThinkingDelay = 0;
+                    if (IsSoundValid(sounds.gameStart)) PlaySound(sounds.gameStart);
+                    if (!untimedGame) { whiteTime = blackTime = 600.0f; }
+                    if (vsBot && botProfile.engine == ENGINE_STOCKFISH) {
+                        GetStockfishEngine().newGame();
+                    }
                 }
             }
             if (DrawButton(modalReviewBtn, "Review Board", 17, hoverModalReview, Color{ 54, 52, 49, 255 }, Color{ 75, 73, 70, 255 })) {
                 showGameOverModal = false;
             }
             if (DrawButton(modalMenuBtn, "Back to Main Menu", 17, hoverModalMenu, Color{ 48, 64, 90, 255 }, Color{ 65, 88, 125, 255 }, RAYWHITE)) {
+                if (isOnline) NetworkManager::getInstance().disconnect();
                 returnToMenu = true;
             }
         }
@@ -1536,15 +1747,82 @@ int main() {
 
             if (DrawButton(saveExitBtn, "Save & Return to Menu", 16, hoverExitSave, Color{ 120, 160, 90, 255 }, Color{ 140, 185, 105, 255 }, WHITE)) {
                 board.save(currentTurn);
+                if (isOnline) NetworkManager::getInstance().disconnect();
                 showExitConfirmModal = false;
                 returnToMenu = true;
             }
             if (DrawButton(exitNoSaveBtn, "Exit without Saving", 16, hoverExitNoSave, Color{ 150, 60, 60, 255 }, Color{ 180, 75, 75, 255 }, WHITE)) {
+                if (isOnline) NetworkManager::getInstance().disconnect();
                 showExitConfirmModal = false;
                 returnToMenu = true;
             }
             if (DrawButton(cancelBtn, "Cancel (Keep Playing)", 15, hoverExitCancel, Color{ 54, 52, 49, 255 }, Color{ 75, 73, 70, 255 }, RAYWHITE)) {
                 showExitConfirmModal = false;
+            }
+        }
+
+        // --- 6b. Opponent Draw Offer Modal ---
+        if (showOpponentDrawOfferModal && !gameOver) {
+            DrawRectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color{ 0, 0, 0, 185 });
+
+            float mw = 440, mh = 220;
+            float mx = (VIRTUAL_WIDTH - mw) / 2.0f;
+            float my = (VIRTUAL_HEIGHT - mh) / 2.0f;
+
+            DrawRectangleRounded(Rectangle{ mx, my, mw, mh }, 0.08f, 8, Color{ 38, 36, 34, 255 });
+            DrawRectangleRoundedLinesEx(Rectangle{ mx, my, mw, mh }, 0.08f, 8, 2.0f, Color{ 212, 175, 55, 255 });
+
+            int tw = MeasureText("Draw Offer", 24);
+            DrawText("Draw Offer", (int)(mx + (mw - tw) / 2), (int)(my + 28), 24, GOLD);
+
+            std::string prompt = onlineOpponentName + " has offered a draw.";
+            int sw = MeasureText(prompt.c_str(), 16);
+            DrawText(prompt.c_str(), (int)(mx + (mw - sw) / 2), (int)(my + 65), 16, RAYWHITE);
+
+            Rectangle acceptBtn{ mx + 45, my + 115, 165, 46 };
+            Rectangle declineBtn{ mx + 230, my + 115, 165, 46 };
+
+            if (DrawButton(acceptBtn, "Accept Draw", 16, hoverDrawAccept, Color{ 129, 182, 76, 255 }, Color{ 145, 202, 85, 255 }, WHITE)) {
+                NetworkManager::getInstance().sendDrawAccept();
+                showOpponentDrawOfferModal = false;
+                gameOver = true;
+                finalMessage = "DRAW BY MUTUAL AGREEMENT";
+                showGameOverModal = true;
+                if (IsSoundValid(sounds.gameEnd)) PlaySound(sounds.gameEnd);
+            }
+            if (DrawButton(declineBtn, "Decline", 16, hoverDrawDecline, Color{ 70, 42, 42, 255 }, Color{ 180, 50, 50, 255 }, RAYWHITE)) {
+                NetworkManager::getInstance().sendDrawDecline();
+                showOpponentDrawOfferModal = false;
+            }
+        }
+
+        // --- 6c. Opponent Rematch Offer Modal ---
+        if (showRematchOfferedModal) {
+            DrawRectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, Color{ 0, 0, 0, 185 });
+
+            float mw = 440, mh = 220;
+            float mx = (VIRTUAL_WIDTH - mw) / 2.0f;
+            float my = (VIRTUAL_HEIGHT - mh) / 2.0f;
+
+            DrawRectangleRounded(Rectangle{ mx, my, mw, mh }, 0.08f, 8, Color{ 38, 36, 34, 255 });
+            DrawRectangleRoundedLinesEx(Rectangle{ mx, my, mw, mh }, 0.08f, 8, 2.0f, Color{ 100, 160, 230, 255 });
+
+            int tw = MeasureText("Rematch Offer", 24);
+            DrawText("Rematch Offer", (int)(mx + (mw - tw) / 2), (int)(my + 28), 24, Color{ 120, 180, 240, 255 });
+
+            std::string prompt = onlineOpponentName + " wants a rematch!";
+            int sw = MeasureText(prompt.c_str(), 16);
+            DrawText(prompt.c_str(), (int)(mx + (mw - sw) / 2), (int)(my + 65), 16, RAYWHITE);
+
+            Rectangle acceptBtn{ mx + 45, my + 115, 165, 46 };
+            Rectangle declineBtn{ mx + 230, my + 115, 165, 46 };
+
+            if (DrawButton(acceptBtn, "Accept Rematch", 16, hoverRematchAccept, Color{ 100, 160, 230, 255 }, Color{ 120, 185, 255, 255 }, WHITE)) {
+                NetworkManager::getInstance().sendRematchAccept();
+                showRematchOfferedModal = false;
+            }
+            if (DrawButton(declineBtn, "Decline", 16, hoverRematchDecline, Color{ 70, 42, 42, 255 }, Color{ 180, 50, 50, 255 }, RAYWHITE)) {
+                showRematchOfferedModal = false;
             }
         }
 

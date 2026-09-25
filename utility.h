@@ -1,5 +1,6 @@
 #pragma once
-#include"raylib.h"
+#include "raylib.h"
+#include <string>
 
 enum COLOR {
 	PWHITE,PBLACK
@@ -40,11 +41,16 @@ enum MenuChoice {
     NONE,
     NEW_GAME,
     NEW_GAME_BOT,
+    PLAY_ONLINE,
     LOAD_GAME,
     EXIT_GAME
 };
 
 MenuChoice ShowStartMenu();
+
+// Interactive Online Multiplayer Lobby wizard for creating/joining rooms worldwide
+bool ShowOnlineLobby(std::string& outRoomCode, COLOR& outMyColor, float& outTimeControl,
+    std::string& outOpponentName, std::string& outPlayerName);
 
 enum EngineType {
     ENGINE_INTERNAL,

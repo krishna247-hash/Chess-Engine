@@ -1,0 +1,12 @@
+{
+  "name": "chess-engine-server",
+  "version": "1.0.0",
+  "description": "High-performance multiplayer chess server for Raylib Chess Engine",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": ["chess", "multiplayer", "raylib", "stockfish", "tcp"],
+  "author": "krishna247-hash",
+  "license": "MIT"
+}
